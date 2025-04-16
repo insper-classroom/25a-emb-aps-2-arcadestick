@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
 from time import sleep
+import keyboard
 
 def move_mouse(axis, value):
     """Move o mouse de acordo com o eixo e valor recebidos."""
@@ -13,6 +14,15 @@ def move_mouse(axis, value):
         pyautogui.moveRel(value, 0)
     elif axis == 1:
         pyautogui.moveRel(0, value)
+
+def map_codigo_para_tecla(codigo):
+    mapa = {
+        0x02: 'w',
+        0x03: 's',
+        0x04: 'd',
+        0x05: 'a',
+    }
+    return mapa.get(codigo, None)
 
 def controle(ser):
     while True:
@@ -27,18 +37,20 @@ def controle(ser):
         if len(value_bytes) == 2 and end_byte and end_byte[0] == 0xFF:
             value = int.from_bytes(value_bytes, byteorder='big', signed=True)
 
+            # Movimento do mouse
             if axis == 0x00 or axis == 0x01:
-                # Movimento do mouse (X ou Y)
                 move_mouse(axis, value)
 
-            elif axis == 0x02:
-                pyautogui.press('w')
-            elif axis == 0x03:
-                pyautogui.press('s')
-            elif axis == 0x04:
-                pyautogui.press('d')
-            elif axis == 0x05:
-                pyautogui.press('a')
+            # Comandos de botão
+            elif axis >= 0x02:
+                soltar = axis & 0x80
+                codigo_real = axis & 0x7F
+                tecla = map_codigo_para_tecla(codigo_real)
+                if tecla:
+                    if soltar:
+                        keyboard.release(tecla)
+                    else:
+                        keyboard.press(tecla)
 
 
 

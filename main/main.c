@@ -97,15 +97,22 @@ void button_task(void *p) {
 
     while (1) {
         bool current_state = gpio_get(btn.gpio);
+
         if (last_state && !current_state) {
+            // Pressionado
             uint8_t code = btn.code;
+            xQueueSend(xQueueBTN, &code, portMAX_DELAY);
+        } else if (!last_state && current_state) {
+            // Soltou
+            uint8_t code = btn.code | 0x80; // Bit 7 indica "soltou"
             xQueueSend(xQueueBTN, &code, portMAX_DELAY);
         }
 
         last_state = current_state;
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(20)); // taxa de verificação rápida
     }
 }
+
 
 void fsr_task(void *p) {
     #define WINDOW_SIZE 8
