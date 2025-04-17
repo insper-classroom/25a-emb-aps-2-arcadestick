@@ -116,7 +116,7 @@ void button_task(void *p) {
 
 void fsr_task(void *p) {
     #define WINDOW_SIZE 8
-    const uint gpio = 28; // GPIO usado pelo FSR
+    const uint gpio = 28;
     const uint8_t FSR_LVL1 = 0x06;
     const uint8_t FSR_LVL2 = 0x07;
     const uint8_t FSR_LVL3 = 0x08;
@@ -131,7 +131,7 @@ void fsr_task(void *p) {
     uint8_t last_sent = 0;
 
     while (1) {
-        adc_select_input(2); // Canal 2 (GPIO 28) → FSR
+        adc_select_input(2); // Canal 2 → FSR
         uint16_t raw = adc_read();
 
         sum -= buffer[idx];
@@ -142,34 +142,48 @@ void fsr_task(void *p) {
         uint16_t avg = sum / WINDOW_SIZE;
         int16_t converted = process_adc_value(avg, AXIS_FSR);
 
-        if (converted > 0) {
+        if (converted > 0 && !pressed) {
+            // Espera para estabilizar o valor da pressão
+            vTaskDelay(pdMS_TO_TICKS(150));
+
+            // Releitura após estabilização
+            adc_select_input(2);
+            raw = adc_read();
+
+            // Média nova após delay
+            sum -= buffer[idx];
+            buffer[idx] = raw;
+            sum += raw;
+            idx = (idx + 1) % WINDOW_SIZE;
+
+            avg = sum / WINDOW_SIZE;
+            converted = process_adc_value(avg, AXIS_FSR);
+
             uint8_t current_code;
 
             if (converted < 0x1D)
                 current_code = FSR_LVL1;
-            else if (converted < 0xC0)
+            else if (converted < 0x35)
                 current_code = FSR_LVL2;
             else
                 current_code = FSR_LVL3;
 
-            // Envia apenas se mudou de nível ou é o primeiro envio
-            if (!pressed || current_code != last_sent) {
-                xQueueSend(xQueueBTN, &current_code, portMAX_DELAY);
-                pressed = true;
-                last_sent = current_code;
-            }
+            xQueueSend(xQueueBTN, &current_code, portMAX_DELAY);
+            pressed = true;
+            last_sent = current_code;
 
-        } else if (pressed) {
-            // Soltou o FSR → envia release
+        } else if (converted == 0 && pressed) {
             uint8_t release_code = last_sent | 0x80;
             xQueueSend(xQueueBTN, &release_code, portMAX_DELAY);
             pressed = false;
             last_sent = 0;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(50)); // Verificação a cada 50ms
+        vTaskDelay(pdMS_TO_TICKS(40));
     }
 }
+
+
 
 
 // void fsr_sender_task(void *p) {
