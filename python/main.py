@@ -41,6 +41,18 @@ def controle(ser):
             if axis == 0x00 or axis == 0x01:
                 move_mouse(axis, value)
 
+            elif axis == 0x06:
+                # FSR → lógica baseada em intensidade
+                if value < 0x1d:
+                    keyboard.press_and_release('j')
+                    keyboard.press_and_release('u')
+                elif value < 0xc0:
+                    keyboard.press_and_release('i')
+                    keyboard.press_and_release('k')
+                else:
+                    keyboard.press_and_release('o')
+                    keyboard.press_and_release('l')
+
             # Comandos de botão
             elif axis >= 0x02:
                 soltar = axis & 0x80
