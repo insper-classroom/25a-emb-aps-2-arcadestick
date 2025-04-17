@@ -17,10 +17,13 @@ def move_mouse(axis, value):
 
 def map_codigo_para_tecla(codigo):
     mapa = {
-        0x02: 'w',
-        0x03: 's',
-        0x04: 'd',
-        0x05: 'a',
+        0x02: ['w'],
+        0x03: ['s'],
+        0x04: ['d'],
+        0x05: ['a'],
+        0x06: ['j', 'u'],
+        0x07: ['k', 'i'],
+        0x08: ['o', 'l'],
     }
     return mapa.get(codigo, None)
 
