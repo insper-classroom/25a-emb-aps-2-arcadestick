@@ -116,7 +116,10 @@ void button_task(void *p) {
 
 void fsr_task(void *p) {
     #define WINDOW_SIZE 8
-    uint gpio = 28;
+    const uint gpio = 28; // GPIO usado pelo FSR
+    const uint8_t FSR_LVL1 = 0x06;
+    const uint8_t FSR_LVL2 = 0x07;
+    const uint8_t FSR_LVL3 = 0x08;
 
     adc_gpio_init(gpio);
 
@@ -125,10 +128,10 @@ void fsr_task(void *p) {
     int idx = 0;
 
     bool pressed = false;
-    int16_t max_value = 0;
+    uint8_t last_sent = 0;
 
     while (1) {
-        adc_select_input(2); // FSR (ADC2)
+        adc_select_input(2); // Canal 2 (GPIO 28) → FSR
         uint16_t raw = adc_read();
 
         sum -= buffer[idx];
@@ -140,44 +143,55 @@ void fsr_task(void *p) {
         int16_t converted = process_adc_value(avg, AXIS_FSR);
 
         if (converted > 0) {
-            if (!pressed) {
+            uint8_t current_code;
+
+            if (converted < 0x1D)
+                current_code = FSR_LVL1;
+            else if (converted < 0xC0)
+                current_code = FSR_LVL2;
+            else
+                current_code = FSR_LVL3;
+
+            // Envia apenas se mudou de nível ou é o primeiro envio
+            if (!pressed || current_code != last_sent) {
+                xQueueSend(xQueueBTN, &current_code, portMAX_DELAY);
                 pressed = true;
-                max_value = converted;
-            } else if (converted > max_value) {
-                max_value = converted;
+                last_sent = current_code;
             }
+
         } else if (pressed) {
-            // Soltou o FSR → envia o pico
-            fsr_max_value = max_value;
-            xSemaphoreGive(xFSRSem);
+            // Soltou o FSR → envia release
+            uint8_t release_code = last_sent | 0x80;
+            xQueueSend(xQueueBTN, &release_code, portMAX_DELAY);
             pressed = false;
-            max_value = 0;
+            last_sent = 0;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(50)); // Verificação a cada 50ms
     }
 }
 
-void fsr_sender_task(void *p) {
-    while (1) {
-        if (xSemaphoreTake(xFSRSem, portMAX_DELAY)) {
-            // Envia evento de "pressionado"
-            adc_data_t data = {
-                .axis = AXIS_FSR,
-                .value = fsr_max_value
-            };
-            xQueueSend(xQueueADC, &data, portMAX_DELAY);
 
-            // Espera um pouco e envia evento de "soltou"
-            vTaskDelay(pdMS_TO_TICKS(50)); // pequena espera para garantir recebimento
-            adc_data_t release_event = {
-                .axis = AXIS_FSR,
-                .value = 0x8000  // valor especial para indicar "soltou"
-            };
-            xQueueSend(xQueueADC, &release_event, portMAX_DELAY);
-        }
-    }
-}
+// void fsr_sender_task(void *p) {
+//     while (1) {
+//         if (xSemaphoreTake(xFSRSem, portMAX_DELAY)) {
+//             // Envia evento de "pressionado"
+//             adc_data_t data = {
+//                 .axis = AXIS_FSR,
+//                 .value = fsr_max_value
+//             };
+//             xQueueSend(xQueueADC, &data, portMAX_DELAY);
+
+//             // Espera um pouco e envia evento de "soltou"
+//             vTaskDelay(pdMS_TO_TICKS(50)); // pequena espera para garantir recebimento
+//             adc_data_t release_event = {
+//                 .axis = AXIS_FSR,
+//                 .value = 0x8000  // valor especial para indicar "soltou"
+//             };
+//             xQueueSend(xQueueADC, &release_event, portMAX_DELAY);
+//         }
+//     }
+// }
 
 void uart_task(void *p) {
     adc_data_t data;
@@ -215,7 +229,7 @@ int main() {
     }
 
     xTaskCreate(fsr_task, "FSR_Read", 1024, NULL, 1, NULL);
-    xTaskCreate(fsr_sender_task, "FSR_Send", 512, NULL, 1, NULL);
+    //xTaskCreate(fsr_sender_task, "FSR_Send", 512, NULL, 1, NULL);
     xTaskCreate(uart_task, "UART", 1024, NULL, 1, NULL);
     vTaskStartScheduler();
 
