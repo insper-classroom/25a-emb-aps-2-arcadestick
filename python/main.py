@@ -8,12 +8,12 @@ from tkinter import messagebox
 from time import sleep
 import keyboard
 
-def move_mouse(axis, value):
-    """Move o mouse de acordo com o eixo e valor recebidos."""
-    if axis == 0:
-        pyautogui.moveRel(value, 0)
-    elif axis == 1:
-        pyautogui.moveRel(0, value)
+# def move_mouse(axis, value):
+#     """Move o mouse de acordo com o eixo e valor recebidos."""
+#     if axis == 0:
+#         pyautogui.moveRel(value, 0)
+#     elif axis == 1:
+#         pyautogui.moveRel(0, value)
 
 def map_codigo_para_tecla(codigo):
     mapa = {
@@ -28,6 +28,8 @@ def map_codigo_para_tecla(codigo):
     return mapa.get(codigo, None)
 
 def controle(ser):
+    last_pot_value = None
+
     while True:
         b = ser.read(size=1)
         if not b:
@@ -40,8 +42,17 @@ def controle(ser):
         if len(value_bytes) == 2 and end_byte and end_byte[0] == 0xFF:
             value = int.from_bytes(value_bytes, byteorder='big', signed=True)
 
-            if axis == 0x00 or axis == 0x01:
-                move_mouse(axis, value)
+            if axis == 0x00:
+                # Controle de volume baseado na mudança de valor do potenciômetro
+                if last_pot_value is not None:
+                    delta = value - last_pot_value
+                    if abs(delta) > 3:  # Evita mudanças muito pequenas
+                        if delta > 0:
+                            keyboard.send(-175)  # Volume Up
+                        else:
+                            keyboard.send(-174)  # Volume Down
+                last_pot_value = value
+
             elif axis >= 0x02:
                 soltar = axis & 0x80
                 codigo_real = axis & 0x7F
@@ -52,6 +63,7 @@ def controle(ser):
                             keyboard.release(tecla)
                         else:
                             keyboard.press(tecla)
+
 
 
 
