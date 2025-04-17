@@ -161,11 +161,20 @@ void fsr_task(void *p) {
 void fsr_sender_task(void *p) {
     while (1) {
         if (xSemaphoreTake(xFSRSem, portMAX_DELAY)) {
+            // Envia evento de "pressionado"
             adc_data_t data = {
                 .axis = AXIS_FSR,
                 .value = fsr_max_value
             };
             xQueueSend(xQueueADC, &data, portMAX_DELAY);
+
+            // Espera um pouco e envia evento de "soltou"
+            vTaskDelay(pdMS_TO_TICKS(50)); // pequena espera para garantir recebimento
+            adc_data_t release_event = {
+                .axis = AXIS_FSR,
+                .value = 0x8000  // valor especial para indicar "soltou"
+            };
+            xQueueSend(xQueueADC, &release_event, portMAX_DELAY);
         }
     }
 }
