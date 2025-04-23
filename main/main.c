@@ -12,6 +12,8 @@
 #include "hardware/gpio.h"
 #include "hardware/adc.h"
 
+#include "hc06.h"
+
 #define NUM_BUTTONS 4
 //#define AXIS_X   0
 //#define AXIS_Y   1
@@ -19,6 +21,10 @@
 #define POT_GPIO 26 
 #define POT_ADC  0
 #define AXIS_FSR 6
+
+#define HC06_UART_ID uart1
+#define HC06_BAUD_RATE 9600
+#define HC06_STATE_PIN 3  // HC-STATE
 
 typedef struct {
     uint8_t axis;    // 0 para X, 1 para Y
@@ -40,7 +46,6 @@ button_config_t buttons[NUM_BUTTONS] = {
 QueueHandle_t xQueueADC;
 QueueHandle_t xQueueBTN;
 SemaphoreHandle_t xFSRSem;
-volatile int16_t fsr_max_value = 0;
 
 int16_t process_adc_value(uint16_t raw, uint8_t axis) {
     if (axis == AXIS_FSR) {
@@ -227,23 +232,95 @@ void fsr_task(void *p) {
     }
 }
 
-void uart_task(void *p) {
+// Função para inicializar o HC-06
+// void hc06_init(const char* name, const char* pin) {
+//     char cmd[32];
+    
+//     // Configurar o pino EN
+//     gpio_init(HC06_EN_PIN);
+//     gpio_set_dir(HC06_EN_PIN, GPIO_OUT);
+//     gpio_put(HC06_EN_PIN, 0);  // Ativar o módulo
+    
+//     // Configurar o pino STATE para leitura
+//     gpio_init(HC06_STATE_PIN);
+//     gpio_set_dir(HC06_STATE_PIN, GPIO_IN);
+    
+//     // Pequeno delay para estabilização
+//     vTaskDelay(pdMS_TO_TICKS(500));
+    
+//     // Configurar nome do dispositivo
+//     sprintf(cmd, "AT+NAME%s", name);
+//     uart_puts(HC06_UART_ID, cmd);
+//     vTaskDelay(pdMS_TO_TICKS(500));
+    
+//     // Configurar PIN do dispositivo
+//     sprintf(cmd, "AT+PIN%s", pin);
+//     uart_puts(HC06_UART_ID, cmd);
+//     vTaskDelay(pdMS_TO_TICKS(500));
+// }
+
+void hc06_task(void *p) {
+    // Inicializar UART para o HC-06
+    uart_init(HC06_UART_ID, HC06_BAUD_RATE);
+    gpio_set_function(HC06_TX_PIN, GPIO_FUNC_UART);
+    gpio_set_function(HC06_RX_PIN, GPIO_FUNC_UART);
+    
+    // Inicializar o módulo HC-06
+    hc06_init("ARCADESTICK", "1234");
+    
     adc_data_t data;
     uint8_t code;
+    uint8_t buffer[4];  // Buffer para os dados a serem enviados
 
     while (1) {
         // Prioridade para botões
         if (xQueueReceive(xQueueBTN, &code, 0)) {
-            putchar(code);
-            putchar(0x00);
-            putchar(0x64);
-            putchar(0xFF);
+            buffer[0] = code;
+            buffer[1] = 0x00;
+            buffer[2] = 0x64;
+            buffer[3] = 0xFF;
+            uart_write_blocking(HC06_UART_ID, buffer, 4);
         } else if (xQueueReceive(xQueueADC, &data, 0)) {
-            putchar(data.axis);
-            putchar((data.value >> 8) & 0xFF);
-            putchar(data.value & 0xFF);
-            putchar(0xFF); // End Of Packet
+            buffer[0] = data.axis;
+            buffer[1] = (data.value >> 8) & 0xFF;
+            buffer[2] = data.value & 0xFF;
+            buffer[3] = 0xFF; // End Of Packet
+            uart_write_blocking(HC06_UART_ID, buffer, 4);
         }
+        
+        // Pequeno delay para evitar consumo excessivo de CPU
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void hc06C_task(void *p) {
+    uart_init(HC06_UART_ID, HC06_BAUD_RATE);
+    gpio_set_function(HC06_TX_PIN, GPIO_FUNC_UART);
+    gpio_set_function(HC06_RX_PIN, GPIO_FUNC_UART);
+    //hc06_init("aps2_legal", "1234");
+
+    adc_data_t data;
+    uint8_t code;
+    uint8_t buffer[4];  // Buffer para os dados a serem enviados
+
+    while (1) {
+        // Prioridade para botões
+        if (xQueueReceive(xQueueBTN, &code, 0)) {
+            buffer[0] = code;
+            buffer[1] = 0x00;
+            buffer[2] = 0x64;
+            buffer[3] = 0xFF;
+            uart_write_blocking(HC06_UART_ID, buffer, 4);
+        } else if (xQueueReceive(xQueueADC, &data, 0)) {
+            buffer[0] = data.axis;
+            buffer[1] = (data.value >> 8) & 0xFF;
+            buffer[2] = data.value & 0xFF;
+            buffer[3] = 0xFF; // End Of Packet
+            uart_write_blocking(HC06_UART_ID, buffer, 4);
+        }
+        
+        // Pequeno delay para evitar consumo excessivo de CPU
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -265,7 +342,7 @@ int main() {
     }
 
     xTaskCreate(fsr_task, "FSR_Read", 1024, NULL, 1, NULL);
-    xTaskCreate(uart_task, "UART", 1024, NULL, 1, NULL);
+    xTaskCreate(hc06C_task, "UART", 1024, NULL, 1, NULL);
     vTaskStartScheduler();
 
     while (1);

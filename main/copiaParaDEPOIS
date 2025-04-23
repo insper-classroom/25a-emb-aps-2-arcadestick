@@ -13,14 +13,17 @@
 #include "hardware/adc.h"
 
 #define NUM_BUTTONS 4
-#define AXIS_X   0
-#define AXIS_Y   1
+//#define AXIS_X   0
+//#define AXIS_Y   1
+#define AXIS_POT 0  // Vamos usar 0 como código para o potenciômetro
+#define POT_GPIO 26 
+#define POT_ADC  0
 #define AXIS_FSR 6
 
 #define HC06_UART_ID uart1
 #define HC06_BAUD_RATE 9600
-#define HC06_TX_PIN 5  // UART1 TX (GP5) conectado ao HC-RX
-#define HC06_RX_PIN 4  // UART1 RX (GP4) conectado ao HC-TX
+#define HC06_TX_PIN 4  // UART1 TX (GP4) conectado ao HC-RX
+#define HC06_RX_PIN 5  // UART1 RX (GP5) conectado ao HC-TX
 #define HC06_EN_PIN 6  // HC-EN
 #define HC06_STATE_PIN 7  // HC-STATE
 
@@ -44,7 +47,6 @@ button_config_t buttons[NUM_BUTTONS] = {
 QueueHandle_t xQueueADC;
 QueueHandle_t xQueueBTN;
 SemaphoreHandle_t xFSRSem;
-volatile int16_t fsr_max_value = 0;
 
 int16_t process_adc_value(uint16_t raw, uint8_t axis) {
     if (axis == AXIS_FSR) {
@@ -57,40 +59,81 @@ int16_t process_adc_value(uint16_t raw, uint8_t axis) {
     if (val < 30 && val > -30) {
         val = 0;
     }
-    return val;
+     return val;
 }
 
-void adc_task(void *p) {
-    #define WINDOW_SIZE 8
-    uint8_t axis = (uint32_t)p;
-    uint gpio = (axis == AXIS_X) ? 26 : 27;
+int16_t process_pot_value(uint16_t raw) {
+    // Converte de 0-4095 para 0-255
+    return raw * 255 / 4095;
+}
 
-    adc_gpio_init(gpio);
+// void adc_task(void *p) {
+//     #define WINDOW_SIZE 8
+//     uint8_t axis = (uint32_t)p;
+//     uint gpio = (axis == AXIS_X) ? 26 : 27;
+
+//     adc_gpio_init(gpio);
+
+//     uint16_t buffer[WINDOW_SIZE] = {0};
+//     uint32_t sum = 0;
+//     int idx = 0;
+
+//     while (1) {
+//         adc_select_input(axis);
+        
+//         uint16_t raw = adc_read();
+
+//         sum -= buffer[idx];
+//         buffer[idx] = raw;
+//         sum += raw;
+
+//         idx = (idx + 1) % WINDOW_SIZE;
+
+//         uint16_t avg = sum / WINDOW_SIZE;
+//         int16_t converted = process_adc_value(avg, axis);
+
+//         if (converted != 0) {
+//             adc_data_t data = { .axis = axis, .value = converted };
+//             xQueueSend(xQueueADC, &data, portMAX_DELAY);
+//         }
+
+//         vTaskDelay(pdMS_TO_TICKS(100));
+//     }
+// }
+
+void pot_task(void *p) {
+    #define WINDOW_SIZE 8
+    
+    // Inicializa o GPIO para o ADC
+    adc_gpio_init(POT_GPIO);
 
     uint16_t buffer[WINDOW_SIZE] = {0};
     uint32_t sum = 0;
     int idx = 0;
+    int16_t last_sent = -1; // Inicializa com um valor impossível para garantir o primeiro envio
 
     while (1) {
-        adc_select_input(axis);
+        adc_select_input(POT_ADC);
         
         uint16_t raw = adc_read();
 
+        // Média móvel para suavizar a leitura
         sum -= buffer[idx];
         buffer[idx] = raw;
         sum += raw;
-
         idx = (idx + 1) % WINDOW_SIZE;
 
         uint16_t avg = sum / WINDOW_SIZE;
-        int16_t converted = process_adc_value(avg, axis);
+        int16_t converted = process_pot_value(avg);
 
-        if (converted != 0) {
-            adc_data_t data = { .axis = axis, .value = converted };
+        // Envia apenas se o valor mudou significativamente (evita spam na fila)
+        if (abs(converted - last_sent) > 2) {
+            adc_data_t data = { .axis = AXIS_POT, .value = converted };
             xQueueSend(xQueueADC, &data, portMAX_DELAY);
+            last_sent = converted;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(50)); // Atualiza a cada 50ms
     }
 }
 
@@ -170,7 +213,7 @@ void fsr_task(void *p) {
 
             if (converted < 0x1D)
                 current_code = FSR_LVL1;
-            else if (converted < 0x35)
+            else if (converted < 0x30)
                 current_code = FSR_LVL2;
             else
                 current_code = FSR_LVL3;
@@ -189,30 +232,6 @@ void fsr_task(void *p) {
         vTaskDelay(pdMS_TO_TICKS(40));
     }
 }
-
-
-
-
-// void fsr_sender_task(void *p) {
-//     while (1) {
-//         if (xSemaphoreTake(xFSRSem, portMAX_DELAY)) {
-//             // Envia evento de "pressionado"
-//             adc_data_t data = {
-//                 .axis = AXIS_FSR,
-//                 .value = fsr_max_value
-//             };
-//             xQueueSend(xQueueADC, &data, portMAX_DELAY);
-
-//             // Espera um pouco e envia evento de "soltou"
-//             vTaskDelay(pdMS_TO_TICKS(50)); // pequena espera para garantir recebimento
-//             adc_data_t release_event = {
-//                 .axis = AXIS_FSR,
-//                 .value = 0x8000  // valor especial para indicar "soltou"
-//             };
-//             xQueueSend(xQueueADC, &release_event, portMAX_DELAY);
-//         }
-//     }
-// }
 
 // Função para inicializar o HC-06
 void hc06_init(const char* name, const char* pin) {
@@ -275,26 +294,6 @@ void hc06_task(void *p) {
     }
 }
 
-// void uart_task(void *p) {
-//     adc_data_t data;
-//     uint8_t code;
-
-//     while (1) {
-//         // Prioridade para botões
-//         if (xQueueReceive(xQueueBTN, &code, 0)) {
-//             putchar(code);
-//             putchar(0x00);
-//             putchar(0x64);
-//             putchar(0xFF);
-//         } else if (xQueueReceive(xQueueADC, &data, 0)) {
-//             putchar(data.axis);
-//             putchar((data.value >> 8) & 0xFF);
-//             putchar(data.value & 0xFF);
-//             putchar(0xFF); // End Of Packet
-//         }
-//     }
-// }
-
 int main() {
     stdio_init_all();
     adc_init();
@@ -303,16 +302,16 @@ int main() {
     xQueueBTN = xQueueCreate(10, sizeof(uint8_t));
     xFSRSem = xSemaphoreCreateBinary();
 
-    xTaskCreate(adc_task, "ADC_X", 1024, (void *)0, 1, NULL);
-    xTaskCreate(adc_task, "ADC_Y", 1024, (void *)1, 1, NULL);
+    //xTaskCreate(adc_task, "ADC_X", 1024, (void *)0, 1, NULL);
+    //xTaskCreate(adc_task, "ADC_Y", 1024, (void *)1, 1, NULL);
+
+    xTaskCreate(pot_task, "POT", 1024, NULL, 1, NULL);
 
     for (int i = 0; i < NUM_BUTTONS; i++) {
         xTaskCreate(button_task, "BTN", 512, &buttons[i], 1, NULL);
     }
 
     xTaskCreate(fsr_task, "FSR_Read", 1024, NULL, 1, NULL);
-    //xTaskCreate(fsr_sender_task, "FSR_Send", 512, NULL, 1, NULL);
-    //xTaskCreate(uart_task, "UART", 1024, NULL, 1, NULL);
     xTaskCreate(hc06_task, "UART", 1024, NULL, 1, NULL);
     vTaskStartScheduler();
 

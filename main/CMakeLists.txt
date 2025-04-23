@@ -1,4 +1,5 @@
 add_executable(pico_emb
+        hc06.c
         main.c
 )
 
