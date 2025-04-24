@@ -61,7 +61,7 @@ def controle(ser):
                             keyboard.send(-174)  # Volume Down
                 last_pot_value = value
 
-            elif axis >= 0x02:
+            elif axis >= 0x01:
                 soltar = axis & 0x80
                 codigo_real = axis & 0x7F
                 teclas = map_codigo_para_tecla(codigo_real)
