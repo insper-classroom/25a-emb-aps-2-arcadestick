@@ -137,7 +137,7 @@ def conectar_porta(port_name, root, botao_conectar, status_label, mudar_cor_circ
 def criar_janela():
     root = tk.Tk()
     root.title("Controle de Mouse")
-    root.geometry("400x250")
+    root.geometry("600x400")
     root.resizable(False, False)
 
     # Dark mode color settings
