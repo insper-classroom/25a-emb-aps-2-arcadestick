@@ -17,13 +17,21 @@ import keyboard
 
 def map_codigo_para_tecla(codigo):
     mapa = {
-        0x02: ['w'],
-        0x03: ['s'],
-        0x04: ['d'],
-        0x05: ['a'],
+        0x01: ['w'],
+        0x02: ['s'],
+        0x03: ['d'],
+        0x04: ['a'],
         0x06: ['j', 'u'],
         0x07: ['k', 'i'],
         0x08: ['o', 'l'],
+        0x05: ['u'],
+        0x09: ['i'],
+        0x0A: ['j'],
+        0x0B: ['k'],
+        0x0C: ['o'],
+        0x0D: ['l'],
+        0x0E: ['m'],
+        0x0F: ['z'],
     }
     return mapa.get(codigo, None)
 

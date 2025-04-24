@@ -14,7 +14,7 @@
 
 #include "hc06.h"
 
-#define NUM_BUTTONS 4
+#define NUM_BUTTONS 12
 //#define AXIS_X   0
 //#define AXIS_Y   1
 #define AXIS_POT 0  // Vamos usar 0 como código para o potenciômetro
@@ -24,7 +24,7 @@
 
 #define HC06_UART_ID uart1
 #define HC06_BAUD_RATE 9600
-#define HC06_STATE_PIN 3  // HC-STATE
+//#define HC06_STATE_PIN 3  // HC-STATE
 
 typedef struct {
     uint8_t axis;    // 0 para X, 1 para Y
@@ -37,10 +37,18 @@ typedef struct {
 } button_config_t;
 
 button_config_t buttons[NUM_BUTTONS] = {
-    {15, 0x02}, // W
-    {14, 0x03}, // S
-    {17, 0x04}, // D
-    {16, 0x05}  // A
+    {9, 0x01}, // W
+    {6, 0x02}, // S
+    {7, 0x03}, // D
+    {8, 0x04},  // A
+    {10, 0x05}, // U
+    {11, 0x09}, // I
+    {12, 0x0A}, // J
+    {13, 0x0B}, // K
+    {21, 0x0C}, // O
+    {20, 0x0D}, // L
+    {19, 0x0E}, // M
+    {18, 0x0F}  // nada
 };
 
 QueueHandle_t xQueueADC;
@@ -297,7 +305,7 @@ void hc06C_task(void *p) {
     uart_init(HC06_UART_ID, HC06_BAUD_RATE);
     gpio_set_function(HC06_TX_PIN, GPIO_FUNC_UART);
     gpio_set_function(HC06_RX_PIN, GPIO_FUNC_UART);
-    //hc06_init("aps2_legal", "1234");
+    hc06_init("ARCADESTICK", "1234");
 
     adc_data_t data;
     uint8_t code;
