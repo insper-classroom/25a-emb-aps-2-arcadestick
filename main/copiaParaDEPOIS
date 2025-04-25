@@ -11,8 +11,11 @@
 
 #include "hardware/gpio.h"
 #include "hardware/adc.h"
+#include "hardware/irq.h"
 
-#define NUM_BUTTONS 4
+#include "hc06.h"
+
+#define NUM_BUTTONS 12
 //#define AXIS_X   0
 //#define AXIS_Y   1
 #define AXIS_POT 0  // Vamos usar 0 como código para o potenciômetro
@@ -22,10 +25,7 @@
 
 #define HC06_UART_ID uart1
 #define HC06_BAUD_RATE 9600
-#define HC06_TX_PIN 4  // UART1 TX (GP4) conectado ao HC-RX
-#define HC06_RX_PIN 5  // UART1 RX (GP5) conectado ao HC-TX
-#define HC06_EN_PIN 6  // HC-EN
-#define HC06_STATE_PIN 7  // HC-STATE
+//#define HC06_STATE_PIN 3  // HC-STATE
 
 typedef struct {
     uint8_t axis;    // 0 para X, 1 para Y
@@ -38,15 +38,43 @@ typedef struct {
 } button_config_t;
 
 button_config_t buttons[NUM_BUTTONS] = {
-    {15, 0x02}, // W
-    {14, 0x03}, // S
-    {17, 0x04}, // D
-    {16, 0x05}  // A
+    {9, 0x01}, // W
+    {6, 0x02}, // S
+    {7, 0x03}, // D
+    {8, 0x04},  // A
+    {10, 0x05}, // U
+    {11, 0x09}, // I
+    {12, 0x0A}, // J
+    {13, 0x0B}, // K
+    {21, 0x0C}, // O
+    {20, 0x0D}, // L
+    {19, 0x0E}, // M
+    {18, 0x0F}  // nada
 };
 
 QueueHandle_t xQueueADC;
 QueueHandle_t xQueueBTN;
 SemaphoreHandle_t xFSRSem;
+
+void btn_callback(uint gpio, uint32_t events) {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    uint8_t code = 0;
+
+    if (events & GPIO_IRQ_EDGE_FALL) {
+        // Mapeia GPIO -> código do botão
+        for (int i = 0; i < NUM_BUTTONS; i++) {
+            if (buttons[i].gpio == gpio) {
+                code = buttons[i].code;
+                break;
+            }
+        }
+        xQueueSendFromISR(xQueueBTN, &code, &xHigherPriorityTaskWoken);
+    }
+
+    if (xHigherPriorityTaskWoken) {
+        portYIELD_FROM_ISR();
+    }
+}
 
 int16_t process_adc_value(uint16_t raw, uint8_t axis) {
     if (axis == AXIS_FSR) {
@@ -137,29 +165,28 @@ void pot_task(void *p) {
     }
 }
 
-void button_task(void *p) {
-    button_config_t btn = *(button_config_t *)p;
-    gpio_init(btn.gpio);
-    gpio_set_dir(btn.gpio, GPIO_IN);
-    gpio_pull_up(btn.gpio);
-
-    bool last_state = true;
-
-    while (1) {
-        bool current_state = gpio_get(btn.gpio);
-
-        if (last_state && !current_state) {
-            // Pressionado
-            uint8_t code = btn.code;
-            xQueueSend(xQueueBTN, &code, portMAX_DELAY);
-        } else if (!last_state && current_state) {
-            // Soltou
-            uint8_t code = btn.code | 0x80; // Bit 7 indica "soltou"
-            xQueueSend(xQueueBTN, &code, portMAX_DELAY);
+void btn_callback(uint gpio, uint32_t events) {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    if (events & GPIO_IRQ_EDGE_FALL) {
+        for (int i = 0; i < NUM_BUTTONS; i++) {
+            if (buttons[i].gpio == gpio) {
+                uint8_t code = buttons[i].code;
+                xQueueSendFromISR(xQueueBTN, &code, &xHigherPriorityTaskWoken);
+                break;
+            }
         }
+    } else if (events & GPIO_IRQ_EDGE_RISE) {
+        for (int i = 0; i < NUM_BUTTONS; i++) {
+            if (buttons[i].gpio == gpio) {
+                uint8_t code = buttons[i].code | 0x80; // sinaliza soltou
+                xQueueSendFromISR(xQueueBTN, &code, &xHigherPriorityTaskWoken);
+                break;
+            }
+        }
+    }
 
-        last_state = current_state;
-        vTaskDelay(pdMS_TO_TICKS(20)); // taxa de verificação rápida
+    if (xHigherPriorityTaskWoken) {
+        portYIELD_FROM_ISR();
     }
 }
 
@@ -234,31 +261,31 @@ void fsr_task(void *p) {
 }
 
 // Função para inicializar o HC-06
-void hc06_init(const char* name, const char* pin) {
-    char cmd[32];
+// void hc06_init(const char* name, const char* pin) {
+//     char cmd[32];
     
-    // Configurar o pino EN
-    gpio_init(HC06_EN_PIN);
-    gpio_set_dir(HC06_EN_PIN, GPIO_OUT);
-    gpio_put(HC06_EN_PIN, 0);  // Ativar o módulo
+//     // Configurar o pino EN
+//     gpio_init(HC06_EN_PIN);
+//     gpio_set_dir(HC06_EN_PIN, GPIO_OUT);
+//     gpio_put(HC06_EN_PIN, 0);  // Ativar o módulo
     
-    // Configurar o pino STATE para leitura
-    gpio_init(HC06_STATE_PIN);
-    gpio_set_dir(HC06_STATE_PIN, GPIO_IN);
+//     // Configurar o pino STATE para leitura
+//     gpio_init(HC06_STATE_PIN);
+//     gpio_set_dir(HC06_STATE_PIN, GPIO_IN);
     
-    // Pequeno delay para estabilização
-    vTaskDelay(pdMS_TO_TICKS(500));
+//     // Pequeno delay para estabilização
+//     vTaskDelay(pdMS_TO_TICKS(500));
     
-    // Configurar nome do dispositivo
-    sprintf(cmd, "AT+NAME%s", name);
-    uart_puts(HC06_UART_ID, cmd);
-    vTaskDelay(pdMS_TO_TICKS(500));
+//     // Configurar nome do dispositivo
+//     sprintf(cmd, "AT+NAME%s", name);
+//     uart_puts(HC06_UART_ID, cmd);
+//     vTaskDelay(pdMS_TO_TICKS(500));
     
-    // Configurar PIN do dispositivo
-    sprintf(cmd, "AT+PIN%s", pin);
-    uart_puts(HC06_UART_ID, cmd);
-    vTaskDelay(pdMS_TO_TICKS(500));
-}
+//     // Configurar PIN do dispositivo
+//     sprintf(cmd, "AT+PIN%s", pin);
+//     uart_puts(HC06_UART_ID, cmd);
+//     vTaskDelay(pdMS_TO_TICKS(500));
+// }
 
 void hc06_task(void *p) {
     // Inicializar UART para o HC-06
@@ -267,8 +294,39 @@ void hc06_task(void *p) {
     gpio_set_function(HC06_RX_PIN, GPIO_FUNC_UART);
     
     // Inicializar o módulo HC-06
-    hc06_init("aps2_legal", "1234");
+    hc06_init("ARCADESTICK", "1234");
     
+    adc_data_t data;
+    uint8_t code;
+    uint8_t buffer[4];  // Buffer para os dados a serem enviados
+
+    while (1) {
+        // Prioridade para botões
+        if (xQueueReceive(xQueueBTN, &code, 0)) {
+            buffer[0] = code;
+            buffer[1] = 0x00;
+            buffer[2] = 0x64;
+            buffer[3] = 0xFF;
+            uart_write_blocking(HC06_UART_ID, buffer, 4);
+        } else if (xQueueReceive(xQueueADC, &data, 0)) {
+            buffer[0] = data.axis;
+            buffer[1] = (data.value >> 8) & 0xFF;
+            buffer[2] = data.value & 0xFF;
+            buffer[3] = 0xFF; // End Of Packet
+            uart_write_blocking(HC06_UART_ID, buffer, 4);
+        }
+        
+        // Pequeno delay para evitar consumo excessivo de CPU
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void hc06C_task(void *p) {
+    uart_init(HC06_UART_ID, HC06_BAUD_RATE);
+    gpio_set_function(HC06_TX_PIN, GPIO_FUNC_UART);
+    gpio_set_function(HC06_RX_PIN, GPIO_FUNC_UART);
+    hc06_init("ARCADESTICK", "1234");
+
     adc_data_t data;
     uint8_t code;
     uint8_t buffer[4];  // Buffer para os dados a serem enviados
@@ -305,14 +363,17 @@ int main() {
     //xTaskCreate(adc_task, "ADC_X", 1024, (void *)0, 1, NULL);
     //xTaskCreate(adc_task, "ADC_Y", 1024, (void *)1, 1, NULL);
 
-    xTaskCreate(pot_task, "POT", 1024, NULL, 1, NULL);
-
+    // Inicializa GPIOs dos botões
     for (int i = 0; i < NUM_BUTTONS; i++) {
-        xTaskCreate(button_task, "BTN", 512, &buttons[i], 1, NULL);
+        gpio_init(buttons[i].gpio);
+        gpio_set_dir(buttons[i].gpio, GPIO_IN);
+        gpio_pull_up(buttons[i].gpio);
+        gpio_set_irq_enabled(buttons[i].gpio, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
     }
 
+    xTaskCreate(pot_task, "POT", 1024, NULL, 1, NULL);
     xTaskCreate(fsr_task, "FSR_Read", 1024, NULL, 1, NULL);
-    xTaskCreate(hc06_task, "UART", 1024, NULL, 1, NULL);
+    xTaskCreate(hc06C_task, "UART", 1024, NULL, 1, NULL);
     vTaskStartScheduler();
 
     while (1);
