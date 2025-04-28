@@ -11,7 +11,6 @@
 
 #include "hardware/gpio.h"
 #include "hardware/adc.h"
-#include "hardware/irq.h"
 
 #include "hc06.h"
 
@@ -56,26 +55,6 @@ QueueHandle_t xQueueADC;
 QueueHandle_t xQueueBTN;
 SemaphoreHandle_t xFSRSem;
 
-void btn_callback(uint gpio, uint32_t events) {
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    uint8_t code = 0;
-
-    if (events & GPIO_IRQ_EDGE_FALL) {
-        // Mapeia GPIO -> código do botão
-        for (int i = 0; i < NUM_BUTTONS; i++) {
-            if (buttons[i].gpio == gpio) {
-                code = buttons[i].code;
-                break;
-            }
-        }
-        xQueueSendFromISR(xQueueBTN, &code, &xHigherPriorityTaskWoken);
-    }
-
-    if (xHigherPriorityTaskWoken) {
-        portYIELD_FROM_ISR();
-    }
-}
-
 int16_t process_adc_value(uint16_t raw, uint8_t axis) {
     if (axis == AXIS_FSR) {
         if (raw < 300) return 0; // Considera "não pressionado"
@@ -94,40 +73,6 @@ int16_t process_pot_value(uint16_t raw) {
     // Converte de 0-4095 para 0-255
     return raw * 255 / 4095;
 }
-
-// void adc_task(void *p) {
-//     #define WINDOW_SIZE 8
-//     uint8_t axis = (uint32_t)p;
-//     uint gpio = (axis == AXIS_X) ? 26 : 27;
-
-//     adc_gpio_init(gpio);
-
-//     uint16_t buffer[WINDOW_SIZE] = {0};
-//     uint32_t sum = 0;
-//     int idx = 0;
-
-//     while (1) {
-//         adc_select_input(axis);
-        
-//         uint16_t raw = adc_read();
-
-//         sum -= buffer[idx];
-//         buffer[idx] = raw;
-//         sum += raw;
-
-//         idx = (idx + 1) % WINDOW_SIZE;
-
-//         uint16_t avg = sum / WINDOW_SIZE;
-//         int16_t converted = process_adc_value(avg, axis);
-
-//         if (converted != 0) {
-//             adc_data_t data = { .axis = axis, .value = converted };
-//             xQueueSend(xQueueADC, &data, portMAX_DELAY);
-//         }
-
-//         vTaskDelay(pdMS_TO_TICKS(100));
-//     }
-// }
 
 void pot_task(void *p) {
     #define WINDOW_SIZE 8
@@ -165,28 +110,29 @@ void pot_task(void *p) {
     }
 }
 
-void btn_callback(uint gpio, uint32_t events) {
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    if (events & GPIO_IRQ_EDGE_FALL) {
-        for (int i = 0; i < NUM_BUTTONS; i++) {
-            if (buttons[i].gpio == gpio) {
-                uint8_t code = buttons[i].code;
-                xQueueSendFromISR(xQueueBTN, &code, &xHigherPriorityTaskWoken);
-                break;
-            }
-        }
-    } else if (events & GPIO_IRQ_EDGE_RISE) {
-        for (int i = 0; i < NUM_BUTTONS; i++) {
-            if (buttons[i].gpio == gpio) {
-                uint8_t code = buttons[i].code | 0x80; // sinaliza soltou
-                xQueueSendFromISR(xQueueBTN, &code, &xHigherPriorityTaskWoken);
-                break;
-            }
-        }
-    }
+void button_task(void *p) {
+    button_config_t btn = *(button_config_t *)p;
+    gpio_init(btn.gpio);
+    gpio_set_dir(btn.gpio, GPIO_IN);
+    gpio_pull_up(btn.gpio);
 
-    if (xHigherPriorityTaskWoken) {
-        portYIELD_FROM_ISR();
+    bool last_state = true;
+
+    while (1) {
+        bool current_state = gpio_get(btn.gpio);
+
+        if (last_state && !current_state) {
+            // Pressionado
+            uint8_t code = btn.code;
+            xQueueSend(xQueueBTN, &code, portMAX_DELAY);
+        } else if (!last_state && current_state) {
+            // Soltou
+            uint8_t code = btn.code | 0x80; // Bit 7 indica "soltou"
+            xQueueSend(xQueueBTN, &code, portMAX_DELAY);
+        }
+
+        last_state = current_state;
+        vTaskDelay(pdMS_TO_TICKS(20)); // taxa de verificação rápida
     }
 }
 
@@ -259,33 +205,6 @@ void fsr_task(void *p) {
         vTaskDelay(pdMS_TO_TICKS(40));
     }
 }
-
-// Função para inicializar o HC-06
-// void hc06_init(const char* name, const char* pin) {
-//     char cmd[32];
-    
-//     // Configurar o pino EN
-//     gpio_init(HC06_EN_PIN);
-//     gpio_set_dir(HC06_EN_PIN, GPIO_OUT);
-//     gpio_put(HC06_EN_PIN, 0);  // Ativar o módulo
-    
-//     // Configurar o pino STATE para leitura
-//     gpio_init(HC06_STATE_PIN);
-//     gpio_set_dir(HC06_STATE_PIN, GPIO_IN);
-    
-//     // Pequeno delay para estabilização
-//     vTaskDelay(pdMS_TO_TICKS(500));
-    
-//     // Configurar nome do dispositivo
-//     sprintf(cmd, "AT+NAME%s", name);
-//     uart_puts(HC06_UART_ID, cmd);
-//     vTaskDelay(pdMS_TO_TICKS(500));
-    
-//     // Configurar PIN do dispositivo
-//     sprintf(cmd, "AT+PIN%s", pin);
-//     uart_puts(HC06_UART_ID, cmd);
-//     vTaskDelay(pdMS_TO_TICKS(500));
-// }
 
 void hc06_task(void *p) {
     // Inicializar UART para o HC-06
@@ -363,15 +282,12 @@ int main() {
     //xTaskCreate(adc_task, "ADC_X", 1024, (void *)0, 1, NULL);
     //xTaskCreate(adc_task, "ADC_Y", 1024, (void *)1, 1, NULL);
 
-    // Inicializa GPIOs dos botões
+    xTaskCreate(pot_task, "POT", 1024, NULL, 1, NULL);
+
     for (int i = 0; i < NUM_BUTTONS; i++) {
-        gpio_init(buttons[i].gpio);
-        gpio_set_dir(buttons[i].gpio, GPIO_IN);
-        gpio_pull_up(buttons[i].gpio);
-        gpio_set_irq_enabled(buttons[i].gpio, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
+        xTaskCreate(button_task, "BTN", 512, &buttons[i], 1, NULL);
     }
 
-    xTaskCreate(pot_task, "POT", 1024, NULL, 1, NULL);
     xTaskCreate(fsr_task, "FSR_Read", 1024, NULL, 1, NULL);
     xTaskCreate(hc06C_task, "UART", 1024, NULL, 1, NULL);
     vTaskStartScheduler();

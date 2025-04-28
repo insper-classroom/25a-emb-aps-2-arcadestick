@@ -1,5 +1,9 @@
 add_executable(pico_emb
+        button.c
+        pot.c
         hc06.c
+        fsr.c
+        hc06_task.c
         main.c
 )
 
