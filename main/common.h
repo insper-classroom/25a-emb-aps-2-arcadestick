@@ -34,4 +34,9 @@ typedef struct {
     uint8_t code;
 } button_config_t;
 
+typedef struct {
+    uint8_t code;
+    bool pressed;
+} button_data_t;
+
 #endif

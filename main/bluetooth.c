@@ -38,101 +38,172 @@ static enum {
     APP_CONNECTED
 } app_state = APP_BOOTING;
 
+// HID Keyboard Scan Codes
+#define HID_KEY_A           0x04
+#define HID_KEY_D           0x07
+#define HID_KEY_F           0x09
+#define HID_KEY_I           0x0C
+#define HID_KEY_J           0x0D
+#define HID_KEY_K           0x0E
+#define HID_KEY_L           0x0F
+#define HID_KEY_O           0x12
+#define HID_KEY_S           0x16
+#define HID_KEY_U           0x18
+#define HID_KEY_W           0x1A
+#define HID_KEY_ESC         0x29
+
+// Estrutura para mapear botões para teclas
+typedef struct {
+    uint8_t button_code;
+    uint8_t key_count;
+    uint8_t keys[2];  // Máximo 2 teclas por botão
+} button_key_map_t;
+
+// Mapeamento conforme sua especificação
+static const button_key_map_t key_mapping[] = {
+    {0x01, 1, {HID_KEY_W, 0}},
+    {0x02, 1, {HID_KEY_S, 0}},
+    {0x03, 1, {HID_KEY_D, 0}},
+    {0x04, 1, {HID_KEY_A, 0}},
+    {0x05, 1, {HID_KEY_U, 0}},
+    {0x06, 2, {HID_KEY_J, HID_KEY_U}},
+    {0x07, 2, {HID_KEY_K, HID_KEY_I}},
+    {0x08, 2, {HID_KEY_O, HID_KEY_L}},
+    {0x09, 1, {HID_KEY_I, 0}},
+    {0x0A, 1, {HID_KEY_J, 0}},
+    {0x0B, 1, {HID_KEY_K, 0}},
+    {0x0C, 1, {HID_KEY_O, 0}},
+    {0x0D, 1, {HID_KEY_L, 0}},
+    {0x0E, 1, {HID_KEY_ESC, 0}},
+    {0x0F, 1, {HID_KEY_F, 0}}
+};
+
 // HID Descriptor for Gamepad/Keyboard combo
-const uint8_t hid_descriptor_gamepad[] = {
-    // Gamepad
+const uint8_t hid_descriptor_keyboard[] = {
     0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
-    0x09, 0x05,        // Usage (Game Pad)
+    0x09, 0x06,        // Usage (Keyboard)
     0xA1, 0x01,        // Collection (Application)
     0x85, 0x01,        //   Report ID (1)
     
-    // Buttons (12 buttons)
-    0x05, 0x09,        //   Usage Page (Button)
-    0x19, 0x01,        //   Usage Minimum (0x01)
-    0x29, 0x0C,        //   Usage Maximum (0x0C)
+    // Modifier keys
+    0x05, 0x07,        //   Usage Page (Kbrd/Keypad)
+    0x19, 0xE0,        //   Usage Minimum (0xE0)
+    0x29, 0xE7,        //   Usage Maximum (0xE7)
     0x15, 0x00,        //   Logical Minimum (0)
     0x25, 0x01,        //   Logical Maximum (1)
-    0x95, 0x0C,        //   Report Count (12)
     0x75, 0x01,        //   Report Size (1)
+    0x95, 0x08,        //   Report Count (8)
     0x81, 0x02,        //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
     
-    // Padding (4 bits to complete byte)
+    // Reserved byte
     0x95, 0x01,        //   Report Count (1)
-    0x75, 0x04,        //   Report Size (4)
+    0x75, 0x08,        //   Report Size (8)
     0x81, 0x03,        //   Input (Const,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
     
-    // Analog inputs (Pot and FSR)
-    0x05, 0x01,        //   Usage Page (Generic Desktop Ctrls)
-    0x09, 0x30,        //   Usage (X)
-    0x15, 0x00,        //   Logical Minimum (0)
-    0x26, 0xFF, 0x00,  //   Logical Maximum (255)
-    0x95, 0x01,        //   Report Count (1)
+    // Key array (6 keys)
+    0x95, 0x06,        //   Report Count (6)
     0x75, 0x08,        //   Report Size (8)
-    0x81, 0x02,        //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    
-    0x09, 0x31,        //   Usage (Y)
     0x15, 0x00,        //   Logical Minimum (0)
-    0x26, 0xFF, 0x00,  //   Logical Maximum (255)
-    0x95, 0x01,        //   Report Count (1)
-    0x75, 0x08,        //   Report Size (8)
-    0x81, 0x02,        //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x25, 0x65,        //   Logical Maximum (101)
+    0x05, 0x07,        //   Usage Page (Kbrd/Keypad)
+    0x19, 0x00,        //   Usage Minimum (0x00)
+    0x29, 0x65,        //   Usage Maximum (0x65)
+    0x81, 0x00,        //   Input (Data,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
     
     0xC0,              // End Collection
 };
 
-// HID Report Functions
-static void send_gamepad_report(uint16_t buttons, uint8_t pot_value, uint8_t fsr_value) {
+// Estrutura para controlar estado das teclas
+static uint8_t pressed_keys[6] = {0}; // Array de teclas pressionadas
+static uint8_t key_count = 0;
+
+// Função para encontrar teclas baseado no código do botão
+static const button_key_map_t* find_key_mapping(uint8_t button_code) {
+    for (int i = 0; i < sizeof(key_mapping) / sizeof(key_mapping[0]); i++) {
+        if (key_mapping[i].button_code == (button_code & 0x7F)) {
+            return &key_mapping[i];
+        }
+    }
+    return NULL;
+}
+
+// Função para adicionar tecla ao array
+static void add_key(uint8_t keycode) {
+    if (key_count < 6) {
+        // Verifica se a tecla já está pressionada
+        for (int i = 0; i < key_count; i++) {
+            if (pressed_keys[i] == keycode) return;
+        }
+        pressed_keys[key_count++] = keycode;
+    }
+}
+
+// Função para remover tecla do array
+static void remove_key(uint8_t keycode) {
+    for (int i = 0; i < key_count; i++) {
+        if (pressed_keys[i] == keycode) {
+            // Move todas as teclas seguintes uma posição para trás
+            for (int j = i; j < key_count - 1; j++) {
+                pressed_keys[j] = pressed_keys[j + 1];
+            }
+            key_count--;
+            pressed_keys[key_count] = 0;
+            break;
+        }
+    }
+}
+
+// Função para enviar relatório de teclado
+static void send_keyboard_report(void) {
     if (app_state != APP_CONNECTED) return;
     
-    // HID Gamepad Report: Report ID + 2 bytes buttons + pot + fsr
-    uint8_t report[] = {
+    // HID Keyboard Report: Report ID + modifier + reserved + 6 keys
+    uint8_t report[9] = {
         0xa1,           // Input Report
         0x01,           // Report ID
-        buttons & 0xFF, // Buttons 1-8
-        (buttons >> 8) & 0x0F, // Buttons 9-12 + padding
-        pot_value,      // Pot axis
-        fsr_value       // FSR axis
+        0x00,           // Modifier keys (none)
+        0x00,           // Reserved
+        pressed_keys[0], pressed_keys[1], pressed_keys[2],
+        pressed_keys[3], pressed_keys[4], pressed_keys[5]
     };
     
     hid_device_send_interrupt_message(hid_cid, report, sizeof(report));
 }
 
+// Substitua a função hid_report_task por esta versão
 void hid_report_task(void *p) {
-    static uint16_t button_state = 0;
-    static uint8_t pot_value = 0;
-    static uint8_t fsr_value = 0;
     static TickType_t last_report_time = 0;
-    
-    adc_data_t adc_data;
-    button_data_t btn_data;
+    uint8_t btn_code;
     bool state_changed = false;
 
     while (1) {
         // Process button events
-        if (xQueueReceive(xQueueBTN, &btn_data, 0)) {
-            uint16_t button_mask = 1 << (btn_data.code - 1);
-            if (btn_data.pressed) {
-                button_state |= button_mask;
-            } else {
-                button_state &= ~button_mask;
+        if (xQueueReceive(xQueueBTN, &btn_code, 0)) {
+            bool is_release = (btn_code & 0x80) != 0;
+            uint8_t button_code = btn_code & 0x7F;
+            
+            const button_key_map_t* mapping = find_key_mapping(button_code);
+            if (mapping) {
+                if (is_release) {
+                    // Soltar teclas
+                    for (int i = 0; i < mapping->key_count; i++) {
+                        remove_key(mapping->keys[i]);
+                    }
+                } else {
+                    // Pressionar teclas
+                    for (int i = 0; i < mapping->key_count; i++) {
+                        add_key(mapping->keys[i]);
+                    }
+                }
+                state_changed = true;
+                printf("Button 0x%02X %s\n", button_code, is_release ? "released" : "pressed");
             }
-            state_changed = true;
-        }
-
-        // Process ADC events
-        if (xQueueReceive(xQueueADC, &adc_data, 0)) {
-            if (adc_data.axis == AXIS_POT) {
-                pot_value = (uint8_t)adc_data.value;
-            } else if (adc_data.axis == AXIS_FSR) {
-                fsr_value = (uint8_t)adc_data.value;
-            }
-            state_changed = true;
         }
 
         // Send report if state changed or periodic update
         TickType_t current_time = xTaskGetTickCount();
         if (state_changed || (current_time - last_report_time) > pdMS_TO_TICKS(100)) {
-            send_gamepad_report(button_state, pot_value, fsr_value);
+            send_keyboard_report();
             last_report_time = current_time;
             state_changed = false;
         }
@@ -201,12 +272,12 @@ int btstack_main(int argc, const char * argv[]) {
     (void)argc;
     (void)argv;
 
-    printf("Arcade Stick Bluetooth HID Starting...\n");
+    printf("Arcade Stick Bluetooth HID Keyboard Starting...\n");
 
     // Allow discoverable
     gap_discoverable_control(1);
-    gap_set_class_of_device(0x2508); // Gamepad
-    gap_set_local_name("Arcade Stick HID 00:00:00:00:00:00");
+    gap_set_class_of_device(0x2540); // MUDOU: Keyboard em vez de Gamepad
+    gap_set_local_name("Arcade Stick Keyboard 00:00:00:00:00:00"); // MUDOU: Nome
     gap_set_default_link_policy_settings(LM_LINK_POLICY_ENABLE_ROLE_SWITCH | LM_LINK_POLICY_ENABLE_SNIFF_MODE);
     gap_set_allow_role_switch(true);
 
@@ -224,14 +295,14 @@ int btstack_main(int argc, const char * argv[]) {
     uint8_t hid_normally_connectable = 1;
 
     hid_sdp_record_t hid_params = {
-        0x2508, 33, // Gamepad, US country code
+        0x2540, 33, // MUDOU: Keyboard, US country code
         hid_virtual_cable, hid_remote_wake, 
         hid_reconnect_initiate, hid_normally_connectable,
         hid_boot_device,
-        1600, 3200, // latency parameters
+        1600, 3200,
         3200,
-        hid_descriptor_gamepad,
-        sizeof(hid_descriptor_gamepad),
+        hid_descriptor_keyboard,              // MUDOU: keyboard
+        sizeof(hid_descriptor_keyboard),      // MUDOU: keyboard
         hid_device_name
     };
     
@@ -243,10 +314,8 @@ int btstack_main(int argc, const char * argv[]) {
                                DEVICE_ID_VENDOR_ID_SOURCE_BLUETOOTH, BLUETOOTH_COMPANY_ID_BLUEKITCHEN_GMBH, 1, 1);
     sdp_register_service(device_id_sdp_service_buffer);
 
-    // HID Device
-    hid_device_init(hid_boot_device, sizeof(hid_descriptor_gamepad), hid_descriptor_gamepad);
-    
-    // Register event handlers
+    hid_device_init(hid_boot_device, sizeof(hid_descriptor_keyboard), hid_descriptor_keyboard); // MUDOU
+
     hci_event_callback_registration.callback = &packet_handler;
     hci_add_event_handler(&hci_event_callback_registration);
     hid_device_register_packet_handler(&packet_handler);

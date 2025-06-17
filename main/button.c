@@ -19,9 +19,11 @@ void button_task(void *p) {
         bool current_state = gpio_get(btn.gpio);
 
         if (last_state && !current_state) {
+            // Botão pressionado
             uint8_t code = btn.code;
             xQueueSend(xQueueBTN, &code, portMAX_DELAY);
         } else if (!last_state && current_state) {
+            // Botão solto
             uint8_t code = btn.code | 0x80;
             xQueueSend(xQueueBTN, &code, portMAX_DELAY);
         }
