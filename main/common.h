@@ -7,11 +7,17 @@
 
 #define NUM_BUTTONS 12
 
-#define AXIS_POT 0
+// GPIO Configuration
+#define GPIO_STATUS_LED 15
 #define POT_GPIO 26
-#define POT_ADC  0
+#define POT_ADC 0
+#define FSR_GPIO 28
+#define FSR_ADC 2
 
+// Axis definitions
 #define AXIS_FSR 6
+#define AXIS_POT 0
+
 
 #define HC06_UART_ID uart1
 #define HC06_BAUD_RATE 9600
