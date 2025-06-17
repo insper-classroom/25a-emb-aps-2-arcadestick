@@ -20,6 +20,34 @@ button_config_t buttons[NUM_BUTTONS] = {
     {21, 0x0C}, {20, 0x0D}, {19, 0x0E}, {18, 0x0F}
 };
 
+void init_gpio(void) {
+    gpio_init(GPIO_STATUS_LED);
+    gpio_set_dir(GPIO_STATUS_LED, GPIO_OUT);
+    gpio_put(GPIO_STATUS_LED, 0);
+}
+
+void update_status_led(void) {
+    static bool led_state = false;
+    
+    switch (app_state) {
+        case APP_NOT_CONNECTED:
+        case APP_CONNECTING:
+            // Pisca devagar quando não conectado
+            led_state = !led_state;
+            gpio_put(GPIO_STATUS_LED, led_state);
+            break;
+            
+        case APP_CONNECTED:
+            // Aceso fixo quando conectado
+            gpio_put(GPIO_STATUS_LED, 1);
+            break;
+            
+        default:
+            gpio_put(GPIO_STATUS_LED, 0);
+            break;
+    }
+}
+
 int main() {
     stdio_init_all();
     adc_init();
@@ -39,6 +67,7 @@ int main() {
     xQueueBTN = xQueueCreate(10, sizeof(uint8_t));
     xFSRSem = xSemaphoreCreateBinary();
 
+    
     xTaskCreate(pot_task, "POT", 1024, NULL, 1, NULL);
     xTaskCreate(hid_report_task, "HID_REPORT", 1024, NULL, 2, NULL);
 

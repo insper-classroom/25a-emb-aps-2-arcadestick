@@ -52,6 +52,10 @@ static enum {
 #define HID_KEY_W           0x1A
 #define HID_KEY_ESC         0x29
 
+#define HID_USAGE_VOLUME_UP    0xE9
+#define HID_USAGE_VOLUME_DOWN  0xEA
+#define HID_USAGE_MUTE         0xE2
+
 // Estrutura para mapear botões para teclas
 typedef struct {
     uint8_t button_code;
@@ -113,6 +117,79 @@ const uint8_t hid_descriptor_keyboard[] = {
     0xC0,              // End Collection
 };
 
+const uint8_t hid_descriptor_consumer[] = {
+    0x05, 0x0C,        // Usage Page (Consumer)
+    0x09, 0x01,        // Usage (Consumer Control)
+    0xA1, 0x01,        // Collection (Application)
+    0x85, 0x02,        //   Report ID (2) - Diferente do keyboard (1)
+    0x05, 0x0C,        //   Usage Page (Consumer)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x01,        //   Logical Maximum (1)
+    0x75, 0x01,        //   Report Size (1)
+    0x95, 0x03,        //   Report Count (3)
+    0x09, 0xE9,        //   Usage (Volume Increment)
+    0x09, 0xEA,        //   Usage (Volume Decrement)
+    0x09, 0xE2,        //   Usage (Mute)
+    0x81, 0x02,        //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x95, 0x05,        //   Report Count (5)
+    0x81, 0x03,        //   Input (Const,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0xC0,              // End Collection
+};
+
+// descriptor combinado (keyboard + consumer)
+const uint8_t hid_descriptor_combined[] = {
+    // Keyboard descriptor
+    0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
+    0x09, 0x06,        // Usage (Keyboard)
+    0xA1, 0x01,        // Collection (Application)
+    0x85, 0x01,        //   Report ID (1)
+    
+    // Modifier keys
+    0x05, 0x07,        //   Usage Page (Kbrd/Keypad)
+    0x19, 0xE0,        //   Usage Minimum (0xE0)
+    0x29, 0xE7,        //   Usage Maximum (0xE7)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x01,        //   Logical Maximum (1)
+    0x75, 0x01,        //   Report Size (1)
+    0x95, 0x08,        //   Report Count (8)
+    0x81, 0x02,        //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    
+    // Reserved byte
+    0x95, 0x01,        //   Report Count (1)
+    0x75, 0x08,        //   Report Size (8)
+    0x81, 0x03,        //   Input (Const,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    
+    // Key array (6 keys)
+    0x95, 0x06,        //   Report Count (6)
+    0x75, 0x08,        //   Report Size (8)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x65,        //   Logical Maximum (101)
+    0x05, 0x07,        //   Usage Page (Kbrd/Keypad)
+    0x19, 0x00,        //   Usage Minimum (0x00)
+    0x29, 0x65,        //   Usage Maximum (0x65)
+    0x81, 0x00,        //   Input (Data,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    
+    0xC0,              // End Collection
+
+    // Consumer Control descriptor
+    0x05, 0x0C,        // Usage Page (Consumer)
+    0x09, 0x01,        // Usage (Consumer Control)
+    0xA1, 0x01,        // Collection (Application)
+    0x85, 0x02,        //   Report ID (2)
+    0x05, 0x0C,        //   Usage Page (Consumer)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x01,        //   Logical Maximum (1)
+    0x75, 0x01,        //   Report Size (1)
+    0x95, 0x03,        //   Report Count (3)
+    0x09, 0xE9,        //   Usage (Volume Increment)
+    0x09, 0xEA,        //   Usage (Volume Decrement)
+    0x09, 0xE2,        //   Usage (Mute)
+    0x81, 0x02,        //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x95, 0x05,        //   Report Count (5)
+    0x81, 0x03,        //   Input (Const,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0xC0,              // End Collection
+};
+
 // Estrutura para controlar estado das teclas
 static uint8_t pressed_keys[6] = {0}; // Array de teclas pressionadas
 static uint8_t key_count = 0;
@@ -153,6 +230,26 @@ static void remove_key(uint8_t keycode) {
     }
 }
 
+// Função para enviar comandos de volume
+static void send_volume_command(uint8_t command) {
+    if (app_state != APP_CONNECTED) return;
+    
+    uint8_t report[3] = {
+        0xa1,           // Input Report
+        0x02,           // Report ID (2 - Consumer)
+        command         // Volume command
+    };
+    
+    hid_device_send_interrupt_message(hid_cid, report, sizeof(report));
+    
+    // Delay pequeno
+    vTaskDelay(pdMS_TO_TICKS(50));
+    
+    // Enviar "release" (todos os bits em 0)
+    report[2] = 0x00;
+    hid_device_send_interrupt_message(hid_cid, report, sizeof(report));
+}
+
 // Função para enviar relatório de teclado
 static void send_keyboard_report(void) {
     if (app_state != APP_CONNECTED) return;
@@ -170,14 +267,17 @@ static void send_keyboard_report(void) {
     hid_device_send_interrupt_message(hid_cid, report, sizeof(report));
 }
 
-// Substitua a função hid_report_task por esta versão
+// manda as informações
 void hid_report_task(void *p) {
     static TickType_t last_report_time = 0;
+    static int16_t last_pot_value = -1;
+    
     uint8_t btn_code;
+    adc_data_t adc_data;
     bool state_changed = false;
 
     while (1) {
-        // Process button events
+        // Process button events (código existente)
         if (xQueueReceive(xQueueBTN, &btn_code, 0)) {
             bool is_release = (btn_code & 0x80) != 0;
             uint8_t button_code = btn_code & 0x7F;
@@ -200,7 +300,32 @@ void hid_report_task(void *p) {
             }
         }
 
-        // Send report if state changed or periodic update
+        // Process ADC events (NOVO - para potenciômetro)
+        if (xQueueReceive(xQueueADC, &adc_data, 0)) {
+            if (adc_data.axis == AXIS_POT) {
+                int16_t current_pot = adc_data.value;
+                
+                if (last_pot_value != -1) {
+                    int16_t diff = current_pot - last_pot_value;
+                    
+                    // Só processa se a diferença for significativa
+                    if (abs(diff) > 5) {
+                        if (diff > 0) {
+                            // Potenciômetro aumentou -> Volume UP
+                            send_volume_command(0x01); // Volume Up bit
+                            printf("Volume UP (pot: %d -> %d)\n", last_pot_value, current_pot);
+                        } else {
+                            // Potenciômetro diminuiu -> Volume DOWN
+                            send_volume_command(0x02); // Volume Down bit
+                            printf("Volume DOWN (pot: %d -> %d)\n", last_pot_value, current_pot);
+                        }
+                    }
+                }
+                last_pot_value = current_pot;
+            }
+        }
+
+        // Send keyboard report if state changed or periodic update
         TickType_t current_time = xTaskGetTickCount();
         if (state_changed || (current_time - last_report_time) > pdMS_TO_TICKS(100)) {
             send_keyboard_report();
@@ -272,16 +397,15 @@ int btstack_main(int argc, const char * argv[]) {
     (void)argc;
     (void)argv;
 
-    printf("Arcade Stick Bluetooth HID Keyboard Starting...\n");
+    printf("Arcade Stick Bluetooth HID Keyboard+Media Starting...\n");
 
     // Allow discoverable
     gap_discoverable_control(1);
-    gap_set_class_of_device(0x2540); // MUDOU: Keyboard em vez de Gamepad
-    gap_set_local_name("Arcade Stick Keyboard 00:00:00:00:00:00"); // MUDOU: Nome
+    gap_set_class_of_device(0x2540); // Keyboard
+    gap_set_local_name("Arcade Stick Media Keyboard");
     gap_set_default_link_policy_settings(LM_LINK_POLICY_ENABLE_ROLE_SWITCH | LM_LINK_POLICY_ENABLE_SNIFF_MODE);
     gap_set_allow_role_switch(true);
 
-    // L2CAP
     l2cap_init();
 
     // SDP Server
@@ -295,14 +419,14 @@ int btstack_main(int argc, const char * argv[]) {
     uint8_t hid_normally_connectable = 1;
 
     hid_sdp_record_t hid_params = {
-        0x2540, 33, // MUDOU: Keyboard, US country code
+        0x2540, 33, // Keyboard, US country code
         hid_virtual_cable, hid_remote_wake, 
         hid_reconnect_initiate, hid_normally_connectable,
         hid_boot_device,
         1600, 3200,
         3200,
-        hid_descriptor_keyboard,              // MUDOU: keyboard
-        sizeof(hid_descriptor_keyboard),      // MUDOU: keyboard
+        hid_descriptor_combined,              // MUDOU: descriptor combinado
+        sizeof(hid_descriptor_combined),      // MUDOU: descriptor combinado
         hid_device_name
     };
     
@@ -314,7 +438,7 @@ int btstack_main(int argc, const char * argv[]) {
                                DEVICE_ID_VENDOR_ID_SOURCE_BLUETOOTH, BLUETOOTH_COMPANY_ID_BLUEKITCHEN_GMBH, 1, 1);
     sdp_register_service(device_id_sdp_service_buffer);
 
-    hid_device_init(hid_boot_device, sizeof(hid_descriptor_keyboard), hid_descriptor_keyboard); // MUDOU
+    hid_device_init(hid_boot_device, sizeof(hid_descriptor_combined), hid_descriptor_combined);
 
     hci_event_callback_registration.callback = &packet_handler;
     hci_add_event_handler(&hci_event_callback_registration);
