@@ -22,8 +22,3 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   pico_btstack_cyw43
   pico_cyw43_arch_none
 )
-
-# Including header files directly from project directory
-target_include_directories(${PROJECT_NAME} PRIVATE
-    ${CMAKE_CURRENT_LIST_DIR}
-)
