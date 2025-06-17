@@ -1,7 +1,6 @@
 import sys
 import glob
 import serial
-import pyautogui
 import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
