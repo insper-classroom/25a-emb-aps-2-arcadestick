@@ -58,9 +58,9 @@ void fsr_task(void *p) {
             converted = process_adc_value(avg, AXIS_FSR);
 
             uint8_t current_code;
-            if (converted < 0x1D)
+            if (converted < 0x1B)
                 current_code = FSR_LVL1;
-            else if (converted < 0x30)
+            else if (converted < 0x2C)
                 current_code = FSR_LVL2;
             else
                 current_code = FSR_LVL3;

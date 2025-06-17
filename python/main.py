@@ -30,8 +30,8 @@ def map_codigo_para_tecla(codigo):
         0x0B: ['k'],
         0x0C: ['o'],
         0x0D: ['l'],
-        0x0E: ['m'],
-        0x0F: ['z'],
+        0x0E: ['esc'],
+        0x0F: ['f'],
     }
     return mapa.get(codigo, None)
 
